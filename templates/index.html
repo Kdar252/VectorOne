@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VECTOR1 - Real-Time Race Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist/plotly.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Montserrat", sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      header {
+        background-color: #1e1e1e;
+        color: #ff0000;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px;
+        font-size: 1.5em;
+        text-transform: uppercase;
+      }
+      .content {
+        display: grid;
+        grid-template-columns: repeat(3, 400px);
+        grid-template-rows: repeat(2, 300px);
+        gap: 10px;
+        padding: 20px;
+      }
+      .chart-container {
+        background-color: white;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        height: 300px;
+      }
+      @media (max-width: 768px) {
+        .content {
+          grid-template-columns: 1fr;
+        }
+        .chart-container {
+          height: 250px;
+        }
+      }
+      footer {
+        background-color: #1e1e1e;
+        color: #ff0000;
+        text-align: center;
+        padding: 10px 0;
+        position: fixed;
+        width: 100%;
+        bottom: 0;
+      }
+      .tooltip {
+        position: absolute;
+        text-align: center;
+        width: 80px;
+        height: 28px;
+        padding: 2px;
+        font: 12px sans-serif;
+        background: lightsteelblue;
+        border: 0;
+        border-radius: 8px;
+        pointer-events: none;
+      }
+      body.dark-mode {
+        background-color: #1e1e1e;
+        color: #f4f4f4;
+      }
+      .chart-container.dark-mode {
+        background-color: #333;
+        color: red;
+      }
+      header.dark-mode,
+      footer.dark-mode {
+        background-color: #333;
+        color: #ff0000;
+      }
+      #theme-toggle {
+        background: linear-gradient(135deg, #ff0000, #cc0000);
+        border: none;
+        color: white;
+        padding: 10px 20px;
+        font-size: 16px;
+        font-weight: bold;
+        border-radius: 30px;
+        cursor: pointer;
+        transition: background 0.3s, transform 0.2s;
+      }
+      #theme-toggle:hover {
+        background: linear-gradient(135deg, #cc0000, #ff0000);
+        transform: scale(1.05);
+      }
+      #theme-toggle:focus {
+        outline: none;
+      }
+      #Prediction {
+        padding: 20px;
+        order: 1;
+        grid-column: 2 / 3;
+        grid-row: 1 / 3;
+        height: 550px;
+        font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+        font-weight: 200;
+      }
+
+      table {
+        width: 50%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid black;
+        padding: 8px;
+        text-align: center;
+      }
+      th {
+        background-color: #f2f2f2;
+      }
+      #position-chart {
+        order: 0;
+      }
+
+      #laptime-chart, #sector-chart {
+        order: 2;
+      }
+      #compound-chart {
+        order: 2;
+        grid-column-start: 3;
+      }
+      #h {
+        text-decoration: underline;
+      }
+
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1><span id="h">VECTOR</span>1</h1>
+      <button id="theme-toggle">Toggle Dark Mode</button>
+    </header>
+
+    <div class="content">
+      <div id="position-chart" class="chart-container"></div>
+      <div id="laptime-chart" class="chart-container"></div>
+      <div id="sector-chart" class="chart-container"></div>
+      <div id="compound-chart" class="chart-container"></div>
+      <div id="Prediction" class="chart-container">
+        <h2>Predictions</h2>
+        <table id="f1Table">
+          <thead>
+            <tr>
+              <th>Pit</th>
+              <th>Pit Compound</th>
+              <th>Track Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td id="pit">--</td>
+              <td id="pitCompound">--</td>
+              <td id="trackStatus">--</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Pit: 1 = pitstop, 0 = no pitstop</p>
+        
+        <p>Track Status</p>
+        <ol>
+            <li>Track Clear</li>
+            <li>Yellow Flag</li>
+            <li>???</li>
+            <li>Safety Car</li>
+            <li>Red Flag</li>
+            <li>VSC Start</li>
+            <li>VSC Ending</li>
+        </ol>
+      </div>
+    </div>
+
+    <footer>All rights reserved at VECTOR1 @2024</footer>
+
+    <script>
+      const socket = io();
+      const themeToggle = document.getElementById("theme-toggle");
+    
+      themeToggle.addEventListener("click", () => {
+        document.body.classList.toggle("dark-mode");
+        document
+          .querySelectorAll(".chart-container")
+          .forEach((container) => container.classList.toggle("dark-mode"));
+        document.querySelector("header").classList.toggle("dark-mode");
+        document.querySelector("footer").classList.toggle("dark-mode");
+      });
+    
+      let positionData = { x: [], y: [] };
+      let laptimeData = { x: [], y: [] };
+      let sectorData = { x: [], y1: [], y2: [], y3: [] };
+      let compoundData = { x: [], y: [], color: [] };
+    
+      Plotly.newPlot(
+        "position-chart",
+        [{ x: positionData.x, y: positionData.y, mode: "lines+markers" }],
+        { title: "Real-Time Race Positions" }
+      );
+      Plotly.newPlot(
+        "laptime-chart",
+        [{ x: laptimeData.x, y: laptimeData.y, mode: "lines+markers" }],
+        { title: "Real-Time Lap Times" }
+      );
+      Plotly.newPlot(
+        "sector-chart",
+        [
+          {
+            x: sectorData.x,
+            y: sectorData.y1,
+            mode: "lines+markers",
+            name: "Sector 1",
+          },
+          {
+            x: sectorData.x,
+            y: sectorData.y2,
+            mode: "lines+markers",
+            name: "Sector 2",
+          },
+          {
+            x: sectorData.x,
+            y: sectorData.y3,
+            mode: "lines+markers",
+            name: "Sector 3",
+          },
+        ],
+        { title: "Real-Time Sector Times by Lap Number" }
+      );
+      Plotly.newPlot(
+        "compound-chart",
+        [
+          {
+            x: compoundData.x,
+            y: compoundData.y,
+            mode: "markers",
+            marker: { color: compoundData.color },
+          },
+        ],
+        { title: "Real-Time Lap Times by Tire Compound" }
+      );
+    
+      socket.on("update_position", function (data) {
+        positionData.x.push(data.lap_number);
+        positionData.y.push(data.position);
+        Plotly.update("position-chart", {
+          x: [positionData.x],
+          y: [positionData.y],
+        });
+      });
+    
+      socket.on("update_laptime", function (data) {
+        laptimeData.x.push(data.lap_number);
+        laptimeData.y.push(data.lap_time);
+        Plotly.update("laptime-chart", {
+          x: [laptimeData.x],
+          y: [laptimeData.y],
+        });
+      });
+    
+      socket.on("update_sector", function (data) {
+        sectorData.x.push(data.lap_number);
+        sectorData.y1.push(data.sector1_time);
+        sectorData.y2.push(data.sector2_time);
+        sectorData.y3.push(data.sector3_time);
+        Plotly.update("sector-chart", {
+          x: [sectorData.x],
+          y: [sectorData.y1, sectorData.y2, sectorData.y3],
+        });
+      });
+    
+      socket.on("update_compound", function (data) {
+        compoundData.x.push(data.lap_number);
+        compoundData.y.push(data.lap_time);
+        compoundData.color.push(data.compound);
+        Plotly.update("compound-chart", {
+          x: [compoundData.x],
+          y: [compoundData.y],
+          "marker.color": [compoundData.color],
+        });
+      });
+    
+      socket.on("update_predictions", function (data) {
+        document.getElementById("pit").innerText =
+          data.RF_Pit_Predictions === 1 ? "Pitstop" : "No Pitstop";
+        document.getElementById("pitCompound").innerText = data.RF_Compound_Predictions;
+        document.getElementById("trackStatus").innerText =
+          data.XGB_Pit_Predictions === 1 ? "Pitstop" : "No Pitstop";
+      });
+    </script>
+  </body>
+</html>
